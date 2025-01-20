@@ -1,95 +1,77 @@
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 
 let template = '';
-fs.mkdir(path.join(__dirname, 'project-dist'), { recursive: true }, (error) => {
-  if (error) console.log(error);
-});
+async function build() {
+  await fs.mkdir(path.join(__dirname, 'project-dist'), { recursive: true });
 
-const write = fs.createWriteStream(
-  path.join(__dirname, 'project-dist', 'index.html'),
-);
+  const data = await fs.readFile(path.join(__dirname, 'template.html'));
+  template += data;
 
-fs.createReadStream(path.join(__dirname, 'template.html')).on(
-  'data',
-  (data) => {
-    template += data;
-
-    fs.readdir(
-      path.join(__dirname, 'components'),
-      { withFileTypes: true },
-      (_, components) => {
-        components.forEach((component, i) => {
-          const name = component.name.split('.')[0];
-          fs.createReadStream(
-            path.join(__dirname, 'components', `${name}.html`),
-          ).on('data', (data) => {
-            const content = data.toString();
-            template = template.replace(`{{${name}}}`, content);
-            if (i === components.length - 1) {
-              write.write(template);
-            }
-          });
-        });
-      },
+  const components = await fs.readdir(path.join(__dirname, 'components'), {
+    withFileTypes: true,
+  });
+  for (const component of components) {
+    const name = component.name.split('.')[0];
+    const data = await fs.readFile(
+      path.join(__dirname, 'components', `${name}.html`),
     );
-  },
-);
+    template = template.replace(`{{${name}}}`, '\n' + data);
+  }
 
-const stylesFolder = path.join(__dirname, 'styles');
-
-fs.readdir(stylesFolder, { withFileTypes: true }, (_, styles) => {
-  const write = fs.createWriteStream(
-    path.join(__dirname, 'project-dist', 'style.css'),
+  await fs.writeFile(
+    path.join(__dirname, 'project-dist', 'index.html'),
+    template,
   );
 
-  styles.forEach((style) => {
+  await merge();
+  await copy();
+}
+
+async function merge() {
+  const stylesFolder = path.join(__dirname, 'styles');
+  const styles = await fs.readdir(stylesFolder, { withFileTypes: true });
+
+  let data = '';
+  for (const style of styles) {
     const styleFile = path.join(stylesFolder, style.name);
 
     if (path.extname(styleFile) === '.css') {
-      fs.createReadStream(styleFile).on('data', (data) => {
-        write.write(data);
-      });
+      data += await fs.readFile(styleFile);
     }
-  });
-});
 
-fs.mkdir(
-  path.join(__dirname, 'project-dist', 'assets'),
-  { recursive: true },
-  (error) => {
-    if (error) console.log(error);
-  },
-);
+    await fs.writeFile(path.join(__dirname, 'project-dist', 'style.css'), data);
+  }
+}
 
-const filesFolder = path.join(__dirname, 'assets');
-const copyFolder = path.join(__dirname, 'project-dist', 'assets');
-
-fs.readdir(filesFolder, { recursive: true }, (_, files) => {
-  fs.readdir(copyFolder, { recursive: true }, (_, copyFiles) => {
-    copyFiles.forEach((file) => {
-      if (!files.includes(file)) {
-        fs.rm(path.join(copyFolder, file), { recursive: true }, (error) => {
-          if (error) console.log(error);
-        });
-      }
-    });
+async function copy() {
+  await fs.mkdir(path.join(__dirname, 'project-dist', 'assets'), {
+    recursive: true,
   });
 
-  files.forEach((file) => {
+  const filesFolder = path.join(__dirname, 'assets');
+  const copyFolder = path.join(__dirname, 'project-dist', 'assets');
+
+  const files = await fs.readdir(filesFolder, { recursive: true });
+  const copyFiles = await fs.readdir(copyFolder, { recursive: true });
+
+  for (const file of copyFiles) {
+    if (!files.includes(file)) {
+      await fs.rm(path.join(copyFolder, file), { recursive: true });
+    }
+  }
+
+  for (const file of files) {
     const filesPath = path.join(filesFolder, file);
     const copyPath = path.join(copyFolder, file);
 
-    fs.stat(filesPath, (_, stats) => {
-      if (stats.isDirectory()) {
-        fs.mkdir(copyPath, { recursive: true }, (error) => {
-          if (error) console.log(error);
-        });
-      } else {
-        fs.copyFile(filesPath, copyPath, (error) => {
-          if (error) console.log(error);
-        });
-      }
-    });
-  });
-});
+    const stats = await fs.stat(filesPath);
+    if (stats.isDirectory()) {
+      await fs.mkdir(copyPath, { recursive: true });
+    } else {
+      await fs.copyFile(filesPath, copyPath);
+    }
+  }
+}
+
+build();
